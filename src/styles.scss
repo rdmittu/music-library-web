@@ -1,0 +1,142 @@
+// ─── Design Tokens ───────────────────────────────────────────────────────────
+:root {
+  --color-bg:           #0d0d0f;
+  --color-surface:      #18181c;
+  --color-surface-2:    #222228;
+  --color-border:       #2e2e38;
+  --color-text:         #e8e8f0;
+  --color-text-muted:   #888898;
+  --color-accent:       #7c6af7;
+  --color-accent-hover: #9b8dfb;
+  --color-danger:       #e74c3c;
+  --color-success:      #27ae60;
+
+  --player-height:      72px;
+  --lane-height:        180px;
+  --sidebar-width:      380px;
+
+  --radius-sm:  4px;
+  --radius-md:  8px;
+  --radius-lg:  14px;
+
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  --transition: 200ms ease;
+}
+
+// ─── Reset ────────────────────────────────────────────────────────────────────
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+  &:hover { color: var(--color-accent-hover); }
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+}
+
+input, textarea, select {
+  font: inherit;
+  color: inherit;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  width: 100%;
+  outline: none;
+  transition: border-color var(--transition);
+
+  &:focus { border-color: var(--color-accent); }
+  &::placeholder { color: var(--color-text-muted); }
+}
+
+// ─── Scrollbar ───────────────────────────────────────────────────────────────
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background var(--transition), opacity var(--transition);
+
+  &--primary {
+    background: var(--color-accent);
+    color: #fff;
+    &:hover { background: var(--color-accent-hover); }
+  }
+  &--ghost {
+    background: transparent;
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+    &:hover { background: var(--color-surface-2); }
+  }
+  &--danger {
+    background: var(--color-danger);
+    color: #fff;
+    &:hover { opacity: 0.85; }
+  }
+  &:disabled { opacity: 0.4; cursor: not-allowed; }
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  label { font-size: 12px; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+}
+
+.form-error { color: var(--color-danger); font-size: 12px; }
+
+// ─── Layout ───────────────────────────────────────────────────────────────────
+.app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.main-content {
+  flex: 1;
+  overflow: hidden;
+  padding-bottom: var(--player-height);
+}
