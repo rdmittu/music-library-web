@@ -444,7 +444,7 @@ export class AlbumFormComponent implements OnInit, OnDestroy {
       });
       if (album.cover_art_file_id) {
         this.coverArtFileId.set(album.cover_art_file_id);
-        this.api.thumbBlob(album.cover_art_file_id).subscribe(blob => {
+        this.api.getThumbBlob(album.cover_art_file_id).subscribe((blob: Blob) => {
           if (this.coverObjectUrl) URL.revokeObjectURL(this.coverObjectUrl);
           this.coverObjectUrl = URL.createObjectURL(blob);
           this.coverArtPreviewUrl.set(this.coverObjectUrl);
