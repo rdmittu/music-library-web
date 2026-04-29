@@ -4,14 +4,7 @@ frontend:
     preBuild:
       commands:
         - npm ci --cache .npm --prefer-offline
-        - echo "export const environment = {" > src/environments/environment.ts
-        - echo "  production: true," >> src/environments/environment.ts
-        - echo "  apiUrl: '${API_URL}'," >> src/environments/environment.ts
-        - echo "  cognitoUserPoolId: '${COGNITO_USER_POOL_ID}'," >> src/environments/environment.ts
-        - echo "  cognitoClientId: '${COGNITO_CLIENT_ID}'," >> src/environments/environment.ts
-        - echo "  cognitoDomain: '${COGNITO_DOMAIN}'," >> src/environments/environment.ts
-        - echo "  redirectUrl: '${REDIRECT_URL}'," >> src/environments/environment.ts
-        - echo "};" >> src/environments/environment.ts
+        - bash scripts/generate-env.sh
     build:
       commands:
         - npm run build
