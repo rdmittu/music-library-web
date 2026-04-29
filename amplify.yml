@@ -16,3 +16,12 @@ frontend:
     paths:
       - .npm/**/*
       - node_modules/**/*
+  customHeaders:
+    - pattern: '**/*'
+      headers:
+        - key: Cache-Control
+          value: no-store
+  redirects:
+    - source: '</^[^.]+$|\.(?!(css|gif|ico|jpg|jpeg|js|png|txt|svg|woff|woff2|ttf|map|json|webp)$)([^.]+$)/>'
+      target: /index.html
+      status: '200'
