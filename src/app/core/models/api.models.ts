@@ -214,6 +214,7 @@ export interface IngestItem {
   status: 'pending' | 'matched' | 'rejected';
   created_at: string;
   matched_album_id: string | null;
+  cover_art_file_id: string | null;
 }
 
 // Instrument suggestions for the UI

@@ -182,7 +182,7 @@ function parseDash(s: string): number[] {
       <div #nodeOverlay class="dag-node-overlay"></div>
 
       <!-- Album detail panel -->
-      <app-album-detail-panel
+      <app-album-detail-panel #panelEl
         [albumId]="selectedAlbumId()"
         (close)="selectedAlbumId.set(null)"
         (deleted)="onAlbumDeleted($event)"
@@ -312,6 +312,7 @@ export class DagViewComponent implements AfterViewInit, OnDestroy {
   @ViewChild('timeAxisLine', { static: true }) timeAxisLine!: ElementRef<SVGLineElement>;
   @ViewChild('nodeOverlay',  { static: true }) nodeOverlay!:  ElementRef<HTMLDivElement>;
   @ViewChild('edgeCanvas',   { static: true }) edgeCanvas!:   ElementRef<HTMLCanvasElement>;
+  @ViewChild('panelEl',      { static: true, read: ElementRef }) panelEl!: ElementRef<HTMLElement>;
 
   private readonly api      = inject(ApiService);
   private readonly zone     = inject(NgZone);
@@ -395,6 +396,9 @@ export class DagViewComponent implements AfterViewInit, OnDestroy {
   private nodeElements = new Map<string, HTMLDivElement>();
   private blobUrls = new Map<string, string>(); // fileId -> blobUrl
   private dpr = window.devicePixelRatio || 1;
+  // Per-layout caches for edge rendering
+  private pathCache    = new Map<string, Path2D>();
+  private arrowCache   = new Map<string, { x: number; y: number; dx: number; dy: number } | null>();
 
   readonly legendEntries = Object.entries(EDGE_COLORS).map(([type, color]) => ({
     type, color,
@@ -413,6 +417,9 @@ export class DagViewComponent implements AfterViewInit, OnDestroy {
     // to avoid drawing with identity transform before fitWidth/restoreTransform runs.
     effect(() => {
       const l = this.layout();
+      // Clear per-layout caches whenever layout changes
+      this.pathCache.clear();
+      this.arrowCache.clear();
       if (l) {
         this.zone.runOutsideAngular(() => {
           this.drawLanes(l);
@@ -542,6 +549,7 @@ export class DagViewComponent implements AfterViewInit, OnDestroy {
     // ── Wheel ──
     // Use stored reference instead of AbortController signal — zone.js may not forward signal correctly.
     this.wheelHandler = ((e: WheelEvent) => {
+      if (this.panelEl.nativeElement.contains(e.target as Node)) return;
       e.preventDefault();
       e.stopPropagation();
 
@@ -744,76 +752,158 @@ export class DagViewComponent implements AfterViewInit, OnDestroy {
     const canvas = this.edgeCanvas.nativeElement;
     if (canvas.width === 0) return;
     const ctx = canvas.getContext('2d')!;
-    const ids = this.matchingIds();
+    const ids     = this.matchingIds();
+    const nodeMap = this.nodeMap();
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // CSS-pixel viewport size
+    const vw = canvas.width  / this.dpr;
+    const vh = canvas.height / this.dpr;
+
+    // World-space viewport bounds with a screen-space buffer to avoid pop-in.
+    // buffer is expressed in screen pixels, converted to world units.
+    const bufX = 200 / this.kx;
+    const bufY = 200 / this.ky;
+    const wLeft   = -this.tx / this.kx - bufX;
+    const wRight  = (vw - this.tx) / this.kx + bufX;
+    const wTop    = -this.ty / this.ky - bufY;
+    const wBottom = (vh - this.ty) / this.ky + bufY;
+
+    const showArrows = this.kx > 0.15; // arrowheads invisible when zoomed out far
+    const showLabels = this.kx > 0.45;
+
+    // ── First pass: group edges by type ──────────────────────────────────────
+    // Avoids per-edge ctx state changes; edges of the same type share one stroke call.
+    interface ArrowData { sx: number; sy: number; angle: number; color: string; dim: boolean; }
+    const groups   = new Map<string, { normal: Path2D[]; dim: Path2D[] }>();
+    const arrowsNormal: ArrowData[] = [];
+    const arrowsDim:    ArrowData[] = [];
+
+    for (const edge of l.edges) {
+      if (!edge.path) continue;
+
+      // Viewport cull: skip edges where both endpoints are fully off-screen.
+      const src = nodeMap.get(edge.sourceAlbumId);
+      const tgt = nodeMap.get(edge.targetAlbumId);
+      if (src && tgt) {
+        const srcIn = src.x < wRight  && (src.x + src.width)  > wLeft  &&
+                      src.y < wBottom && (src.y + src.height) > wTop;
+        const tgtIn = tgt.x < wRight  && (tgt.x + tgt.width)  > wLeft  &&
+                      tgt.y < wBottom && (tgt.y + tgt.height) > wTop;
+        if (!srcIn && !tgtIn) continue;
+      }
+
+      // Cache Path2D to avoid re-parsing the SVG path string every frame.
+      let path = this.pathCache.get(edge.path);
+      if (!path) { path = new Path2D(edge.path); this.pathCache.set(edge.path, path); }
+
+      const dim = ids !== null && !ids.has(edge.sourceAlbumId) && !ids.has(edge.targetAlbumId);
+      let g = groups.get(edge.type);
+      if (!g) { g = { normal: [], dim: [] }; groups.set(edge.type, g); }
+      (dim ? g.dim : g.normal).push(path);
+
+      // Collect arrowhead data for screen-space pass.
+      if (showArrows) {
+        let arrow = this.arrowCache.get(edge.path);
+        if (arrow === undefined) { arrow = getArrowEnd(edge.path); this.arrowCache.set(edge.path, arrow); }
+        if (arrow) {
+          const worldAx = tgt ? arrow.x - (tgt.width / 2) * (this.ky / this.kx) : arrow.x;
+          const entry: ArrowData = {
+            sx: this.tx + worldAx * this.kx,
+            sy: this.ty + arrow.y * this.ky,
+            angle: Math.atan2(arrow.dy * this.ky, arrow.dx * this.kx),
+            color: EDGE_COLORS[edge.type] ?? '#888',
+            dim,
+          };
+          (dim ? arrowsDim : arrowsNormal).push(entry);
+        }
+      }
+    }
+
+    // ── Pass 1: stroke edges in world space (batched by type) ────────────────
     ctx.save();
     ctx.scale(this.dpr, this.dpr);
     ctx.transform(this.kx, 0, 0, this.ky, this.tx, this.ty);
 
-    for (const edge of l.edges) {
-      if (!edge.path) continue;
-      const color  = EDGE_COLORS[edge.type] ?? '#888';
-      const width  = edge.type === 'collaboration' ? 2.5 : 1.5;
-      const dim    = ids !== null && !ids.has(edge.sourceAlbumId) && !ids.has(edge.targetAlbumId);
+    for (const [type, { normal, dim }] of groups) {
+      const color = EDGE_COLORS[type] ?? '#888';
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = type === 'collaboration' ? 2.5 : 1.5;
+      ctx.setLineDash(parseDash(EDGE_DASH[type] ?? 'none'));
 
-      ctx.save();
-      ctx.globalAlpha  = dim ? 0.08 : 0.7;
-      ctx.strokeStyle  = color;
-      ctx.fillStyle    = color;
-      ctx.lineWidth    = width;
-      ctx.setLineDash(parseDash(EDGE_DASH[edge.type] ?? 'none'));
+      if (normal.length) {
+        ctx.globalAlpha = 0.7;
+        const combined = new Path2D();
+        for (const p of normal) combined.addPath(p);
+        ctx.stroke(combined);
+      }
+      if (dim.length) {
+        ctx.globalAlpha = 0.08;
+        const combined = new Path2D();
+        for (const p of dim) combined.addPath(p);
+        ctx.stroke(combined);
+      }
+    }
 
-      ctx.stroke(new Path2D(edge.path));
-
-      const arrow = getArrowEnd(edge.path);
-      if (arrow) {
-        ctx.setLineDash([]);
-        const tgtNode = this.nodeMap().get(edge.targetAlbumId);
-
-        // Compute arrowhead world X: pull back to the visual left edge of the target node.
-        // Node center is at arrow.x (world); visual half-width in world units = (node.width/2) * (ky/kx)
-        const worldAx = tgtNode
-          ? arrow.x - (tgtNode.width / 2) * (this.ky / this.kx)
-          : arrow.x;
-
-        // Convert world → screen
-        const screenAx = this.tx + worldAx * this.kx;
-        const screenAy = this.ty + arrow.y  * this.ky;
-
-        // Visual angle in screen space accounts for non-uniform scale
-        const visualAngle = Math.atan2(arrow.dy * this.ky, arrow.dx * this.kx);
-
-        // Draw in screen space (undo the world transform so the triangle isn't stretched)
+    // ── Labels (world space, only when zoomed in) ─────────────────────────────
+    if (showLabels) {
+      ctx.setLineDash([]);
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      for (const edge of l.edges) {
+        if (!edge.label || !edge.path) continue;
+        const mid = getPathMid(edge.path);
+        if (!mid) continue;
+        const dim = ids !== null && !ids.has(edge.sourceAlbumId) && !ids.has(edge.targetAlbumId);
         ctx.save();
-        ctx.resetTransform();
-        ctx.scale(this.dpr, this.dpr);
-        ctx.fillStyle = EDGE_COLORS[edge.type] ?? '#888';
-        ctx.globalAlpha = dim ? 0.08 : 0.7;
-        drawArrowhead(ctx, screenAx, screenAy, visualAngle);
+        ctx.translate(mid.x, mid.y);
+        ctx.scale(1 / this.kx, 1 / this.ky);
+        ctx.globalAlpha = dim ? 0.08 : 0.8;
+        ctx.fillStyle   = EDGE_COLORS[edge.type] ?? '#888';
+        ctx.fillText(edge.label, 0, -6);
         ctx.restore();
       }
+    }
 
-      if (edge.label && this.kx > 0.45) {
-        const mid = getPathMid(edge.path);
-        if (mid) {
-          ctx.save();
-          // Undo the non-uniform zoom for the text so it doesn't stretch
-          ctx.translate(mid.x, mid.y);
-          ctx.scale(1 / this.kx, 1 / this.ky);
-          ctx.setLineDash([]);
-          ctx.font = '10px system-ui, sans-serif';
-          ctx.textAlign = 'center';
-          ctx.globalAlpha = dim ? 0.08 : 0.8;
-          ctx.fillText(edge.label, 0, -6);
-          ctx.restore();
+    ctx.restore(); // undo world transform
+
+    // ── Pass 2: arrowheads in screen space (batched by color) ────────────────
+    if (arrowsNormal.length || arrowsDim.length) {
+      ctx.save();
+      ctx.scale(this.dpr, this.dpr);
+      ctx.setLineDash([]);
+
+      // Batch arrowheads of the same color into one fill() call.
+      const drawBatch = (batch: ArrowData[], alpha: number) => {
+        if (!batch.length) return;
+        ctx.globalAlpha = alpha;
+        // Group by color to minimise fillStyle switches
+        const byColor = new Map<string, ArrowData[]>();
+        for (const a of batch) {
+          let g = byColor.get(a.color);
+          if (!g) { g = []; byColor.set(a.color, g); }
+          g.push(a);
         }
-      }
+        for (const [color, arrows] of byColor) {
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          for (const { sx, sy, angle } of arrows) {
+            const cos = Math.cos(angle), sin = Math.sin(angle);
+            ctx.moveTo(sx, sy);
+            ctx.lineTo(sx + cos * -9 - sin * -3.5, sy + sin * -9 + cos * -3.5);
+            ctx.lineTo(sx + cos * -9 - sin *  3.5, sy + sin * -9 + cos *  3.5);
+            ctx.closePath();
+          }
+          ctx.fill();
+        }
+      };
+
+      drawBatch(arrowsNormal, 0.7);
+      drawBatch(arrowsDim,    0.08);
 
       ctx.restore();
     }
-
-    ctx.restore();
   }
 
   // ── Viewport-culled node management ──────────────────────────────────────

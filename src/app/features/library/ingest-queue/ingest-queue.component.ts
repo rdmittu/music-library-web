@@ -30,6 +30,8 @@ interface NewAlbumState {
   artistOrders: Map<string, number>;
   // Genres
   selectedGenres: (Genre & { is_primary: boolean })[];
+  genreSearch: string;
+  genreResults: Genre[];
   // Credits
   credits: PendingCredit[];
   creditSearch: string;
@@ -84,6 +86,8 @@ function makeNewAlbumState(tag_album: string | null, tag_album_artist: string | 
     selectedArtists: [],
     artistOrders: new Map(),
     selectedGenres: [],
+    genreSearch: '',
+    genreResults: [],
     credits: [],
     creditSearch: '',
     creditResults: [],
@@ -331,7 +335,8 @@ function makeNewAlbumState(tag_album: string | null, tag_album_artist: string | 
                       <div class="search-wrap">
                         <input class="input" type="text" placeholder="Search artists…"
                           [(ngModel)]="group.newAlbum.artistSearch"
-                          (input)="searchNewArtists(group)" />
+                          (input)="searchNewArtists(group)"
+                          (focus)="searchNewArtists(group)" />
                         @if (group.newAlbum.artistResults.length || group.newAlbum.artistSearch.trim()) {
                           <div class="dropdown">
                             @for (a of group.newAlbum.artistResults; track a.id) {
@@ -370,14 +375,28 @@ function makeNewAlbumState(tag_album: string | null, tag_album_artist: string | 
                           </div>
                         }
                       </div>
-                      <select class="select" (change)="addGenre(group, $any($event.target).value); $any($event.target).value = ''">
-                        <option value="">Add genre…</option>
-                        @for (g of availableGenresFor(group); track g.id) {
-                          <option [value]="g.id">
-                            {{ g.parent_name ? g.parent_name + ' › ' : '' }}{{ g.name }}
-                          </option>
+                      <div class="search-wrap">
+                        <input class="input" type="text" placeholder="Search genres…"
+                          [(ngModel)]="group.newAlbum.genreSearch"
+                          (input)="searchGenres(group)"
+                          (focus)="searchGenres(group)" />
+                        @if (group.newAlbum.genreResults.length || group.newAlbum.genreSearch.trim()) {
+                          <div class="dropdown">
+                            @for (g of group.newAlbum.genreResults; track g.id) {
+                              <button type="button" class="dropdown-item"
+                                (click)="addGenreFromSearch(group, g)">
+                                {{ g.parent_name ? g.parent_name + ' › ' : '' }}{{ g.name }}
+                              </button>
+                            }
+                            @if (group.newAlbum.genreSearch.trim() && !group.newAlbum.genreResults.some(g => g.name.toLowerCase() === group.newAlbum.genreSearch.trim().toLowerCase())) {
+                              <button type="button" class="dropdown-item dropdown-item--create"
+                                (click)="createAndAddGenre(group)">
+                                + Create "{{ group.newAlbum.genreSearch.trim() }}"
+                              </button>
+                            }
+                          </div>
                         }
-                      </select>
+                      </div>
                     </div>
 
                     <!-- Credits -->
@@ -622,8 +641,22 @@ export class IngestQueueComponent implements OnInit, OnDestroy {
       firstValueFrom(this.api.getGenres()),
     ]);
     this.allGenres.set(genres);
-    this.groups.set(this.buildGroups(items));
+    const groups = this.buildGroups(items);
+    this.groups.set(groups);
     this.loading.set(false);
+    // Load cover thumbnails for groups that have a cover_art_file_id
+    for (const group of groups) {
+      const coverFileId = group.items[0]?.cover_art_file_id;
+      if (coverFileId) {
+        this.api.getThumbBlob(coverFileId).subscribe((blob: Blob) => {
+          const url = URL.createObjectURL(blob);
+          group.newAlbum._coverObjectUrl    = url;
+          group.newAlbum.coverArtPreviewUrl = url;
+          group.newAlbum.coverArtFileId     = coverFileId;
+          this.groups.update((g) => [...g]);
+        });
+      }
+    }
   }
 
   ngOnDestroy(): void {
@@ -664,6 +697,9 @@ export class IngestQueueComponent implements OnInit, OnDestroy {
 
   setMode(group: AlbumGroup, mode: 'select' | 'new'): void {
     group.mode = mode;
+    if (mode === 'new' && group.newAlbum.artistSearch.trim()) {
+      this.searchNewArtists(group);
+    }
     this.groups.update((g) => [...g]);
   }
 
@@ -749,9 +785,31 @@ export class IngestQueueComponent implements OnInit, OnDestroy {
 
   // ── New album — genres ─────────────────────────────────────────────────────
 
-  availableGenresFor(group: AlbumGroup): Genre[] {
+  searchGenres(group: AlbumGroup): void {
+    const q = group.newAlbum.genreSearch.trim().toLowerCase();
     const selected = new Set(group.newAlbum.selectedGenres.map((g) => g.id));
-    return this.allGenres().filter((g) => !selected.has(g.id));
+    group.newAlbum.genreResults = this.allGenres()
+      .filter((g) => !selected.has(g.id) && (!q || g.name.toLowerCase().includes(q)))
+      .slice(0, 10);
+    this.groups.update((g) => [...g]);
+  }
+
+  addGenreFromSearch(group: AlbumGroup, genre: Genre): void {
+    const na = group.newAlbum;
+    if (na.selectedGenres.some((g) => g.id === genre.id)) return;
+    const isPrimary = na.selectedGenres.length === 0;
+    na.selectedGenres = [...na.selectedGenres, { ...genre, is_primary: isPrimary }];
+    na.genreSearch  = '';
+    na.genreResults = [];
+    this.groups.update((g) => [...g]);
+  }
+
+  async createAndAddGenre(group: AlbumGroup): Promise<void> {
+    const name = group.newAlbum.genreSearch.trim();
+    if (!name) return;
+    const genre = await firstValueFrom(this.api.createGenre({ name }));
+    this.allGenres.update((gs) => [...gs, genre]);
+    this.addGenreFromSearch(group, genre);
   }
 
   addGenre(group: AlbumGroup, genreId: string): void {

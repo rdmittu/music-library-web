@@ -85,7 +85,7 @@ export class AlbumNodeComponent implements OnDestroy {
       }
 
       try {
-        const blob = await firstValueFrom(this.api.getThumbBlob(a.cover_art_file_id, 200));
+        const blob = await firstValueFrom(this.api.getThumbBlob(a.cover_art_file_id, 80));
         const url = URL.createObjectURL(blob);
         this.clearBlobUrl();
         this.blobUrl.set(url);
